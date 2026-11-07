@@ -20,7 +20,7 @@ var UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, l
 var MOBILE_UA = "Mozilla/5.0 (Linux; Android 13; moto g82 5G) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Mobile Safari/537.36";
 
 // DEBUG: true muestra en la lista una tarjeta ⚠ con el motivo cuando no hay enlaces. Ponlo en false al terminar.
-var DEBUG = false;
+var DEBUG = true;
 
 // Switch de sources (el orden de este objeto es el orden de salida)
 var ENABLED_SOURCES = {
