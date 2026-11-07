@@ -20,7 +20,7 @@ var UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, l
 var MOBILE_UA = "Mozilla/5.0 (Linux; Android 13; moto g82 5G) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Mobile Safari/537.36";
 
 // DEBUG: true muestra en la lista una tarjeta ⚠ con el motivo cuando no hay enlaces. Ponlo en false al terminar.
-var DEBUG = true;
+var DEBUG = false;
 
 // Switch de sources (el orden de este objeto es el orden de salida)
 var ENABLED_SOURCES = {
@@ -384,11 +384,28 @@ function describePage(html) {
     return (html || "").length + "b" +
         ", título=" + (t ? t[1].trim().slice(0, 25) : "?") +
         ", m3u8=" + (/m3u8/.test(html) ? "sí" : "no") +
-        ", packer=" + (/eval\(function\(p,a,c,k,e,/.test(html) ? "sí" : "no");
+        ", packer=" + (/eval\(function\(p,a,c,k,e,/.test(html) ? "sí" : "no") +
+        ((html || "").length < 2000 ? ", cuerpo=" + String(html).replace(/\s+/g, " ").replace(/<style[\s\S]*?<\/style>/gi, "").slice(0, 380) : "");
 }
-function wishFromUrl(pageUrl) {
+// Páginas "Loading..." de Streamwish & cía: redirigen con JS o meta refresh a otro dominio/ruta
+function findRedirect(html, baseUrl) {
+    var h = String(html || "");
+    var m = /<meta[^>]+http-equiv=["']?refresh["']?[^>]*content=["'][^"']*url=([^"'>\s]+)/i.exec(h) ||
+        /(?:window\.|top\.|self\.|document\.)?location(?:\.href)?\s*=\s*["']([^"']+)["']/i.exec(h) ||
+        /location\.(?:replace|assign)\(\s*["']([^"']+)["']/i.exec(h) ||
+        /window\.open\(\s*["']([^"']+)["']/i.exec(h);
+    if (!m) return null;
+    var u = absUrl(m[1].replace(/\\\//g, "/"), getOrigin(baseUrl));
+    return /^https?:/i.test(u) && u !== baseUrl ? u : null;
+}
+function wishFromUrl(pageUrl, hop) {
+    hop = hop || 0;
     // Se pide como lo haría el navegador del celular: UA móvil y Referer del sitio (el iframe vive ahí)
-    return fetchText(pageUrl, SITE_BASE + "/", { "User-Agent": MOBILE_UA, "Accept-Language": "es-419,es;q=0.9" }).then(function (r) {
+    return fetchText(pageUrl, hop ? getOrigin(pageUrl) + "/" : SITE_BASE + "/", { "User-Agent": MOBILE_UA, "Accept-Language": "es-419,es;q=0.9" }).then(function (r) {
+        if (hop < 3 && r.html.length < 4000 && !/m3u8|eval\(function\(p,a,c,k,e,/.test(r.html)) {
+            var next = findRedirect(r.html, r.url || pageUrl);
+            if (next) return wishFromUrl(next, hop + 1);
+        }
         var origin = getOrigin(r.url || pageUrl);
         var js = r.html;
         var unpacked = unpackPacked(r.html);
