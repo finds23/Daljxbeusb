@@ -20,7 +20,7 @@ var UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, l
 var MOBILE_UA = "Mozilla/5.0 (Linux; Android 13; moto g82 5G) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Mobile Safari/537.36";
 
 // DEBUG: true muestra en la lista una tarjeta ⚠ con el motivo cuando no hay enlaces. Ponlo en false al terminar.
-var DEBUG = true;
+var DEBUG = false;
 
 // Switch de sources (el orden de este objeto es el orden de salida)
 var ENABLED_SOURCES = {
@@ -84,6 +84,7 @@ function fetchText(url, referer, extraHeaders, opts) {
         "Accept-Language": "es-MX,es;q=0.9,en;q=0.8"
     };
     if (extraHeaders) for (var k in extraHeaders) headers[k] = extraHeaders[k];
+    if (headers["Referer"] === "-") delete headers["Referer"];
     var o = { headers: headers };
     if (opts) for (var k2 in opts) o[k2] = opts[k2];
     return withTimeout(fetch(url, o).then(function (resp) {
@@ -146,11 +147,33 @@ function tryEpisode(slug, season, episode, tmdbId) {
 }
 // Enlaces /series/<slug>/ o /peliculas/<slug>/ de una página de resultados de búsqueda
 function parseLinks(html, kind) {
+    // DooPlay: los resultados reales van en <div class="result-item">; el resto de la página trae series al azar
+    if (/result-item/.test(html)) {
+        var parts = html.split(/class=["'][^"']*result-item/).slice(1);
+        html = parts.join("\n");
+    }
     var re = new RegExp("href=[\"'](?:https?:\\/\\/(?:www\\.)?danimados\\.cc)?\\/" + kind + "\\/([a-z0-9-]+)\\/?[\"']", "gi");
     var slugs = [];
     var m;
     while ((m = re.exec(html)) !== null) if (slugs.indexOf(m[1]) === -1) slugs.push(m[1]);
     return slugs;
+}
+var STOP = /^(el|la|los|las|un|una|de|del|y|e|the|of|and|a|an|en|con|show|disneys?|aventuras?)$/;
+function keyWords(t) {
+    return stripAccents(String(t || "")).toLowerCase().replace(/['’]s\b/g, "").replace(/[^a-z0-9 ]+/g, " ").split(/\s+/).filter(function (w) { return w.length > 2 && !STOP.test(w); });
+}
+// Variantes del título: sin "Disney's ", sin artículo inicial, etc.
+function expandTitles(titles) {
+    var out = [];
+    titles.forEach(function (t) {
+        if (!t) return;
+        out.push(t);
+        var a = t.replace(/^disney['’]?s\s+/i, "");
+        if (a !== t) out.push(a);
+        var b = a.replace(/^(the|el|la|los|las)\s+/i, "");
+        if (b !== a) out.push(b);
+    });
+    return unique(out);
 }
 function searchSlugs(titles, kind) {
     var terms = [];
@@ -158,8 +181,11 @@ function searchSlugs(titles, kind) {
         terms.push(t);
         var plain = stripAccents(t);
         if (plain !== t) terms.push(plain);
+        var kw = keyWords(t);
+        if (kw.length > 1) terms.push(kw.slice(0, 2).join(" "));
+        kw.slice(0, 3).forEach(function (w) { terms.push(w); });
     });
-    terms = unique(terms).slice(0, 6);
+    terms = unique(terms).slice(0, 10);
     return Promise.all(terms.map(function (term) {
         return fetchText(SITE_BASE + "/?s=" + encodeURIComponent(term).replace(/%20/g, "+")).then(function (r) {
             return r.ok ? parseLinks(r.html, kind) : [];
@@ -167,12 +193,20 @@ function searchSlugs(titles, kind) {
     })).then(function (lists) {
         var all = [];
         lists.forEach(function (l) { all = all.concat(l); });
-        return unique(all);
+        var kws = [];
+        titles.forEach(function (t) { kws = kws.concat(keyWords(t)); });
+        kws = unique(kws);
+        function score(slug) { var n = 0; kws.forEach(function (w) { if (slug.indexOf(w) !== -1) n++; }); return n; }
+        var u = unique(all);
+        var rel = u.filter(function (x) { return score(x) > 0; });
+        rel.sort(function (a, b) { return score(b) - score(a); });
+        return rel.length ? rel : u;
     });
 }
 
 function findEpisodePage(titles, tmdbId, season, episode, notes) {
-    var slugs = unique(titles.map(slugify)).slice(0, 4);
+    titles = expandTitles(titles);
+    var slugs = unique(titles.map(slugify)).slice(0, 6);
     return Promise.all(slugs.map(function (s) { return tryEpisode(s, season, episode, tmdbId); })).then(function (res) {
         res.forEach(function (x) { notes.push(x.slug + ": " + (x.page ? "ok" + (x.tmdbSeen ? " tmdb " + x.tmdbSeen : "") : x.status)); });
         var strict = res.filter(function (x) { return x.page && x.strict; })[0];
@@ -194,7 +228,8 @@ function findEpisodePage(titles, tmdbId, season, episode, notes) {
 }
 
 function findMoviePage(titles, notes) {
-    var direct = unique(titles.map(slugify)).slice(0, 4);
+    titles = expandTitles(titles);
+    var direct = unique(titles.map(slugify)).slice(0, 6);
     function tryMovie(slug) {
         var url = SITE_BASE + "/peliculas/" + slug + "/";
         return fetchText(url).then(function (r) {
@@ -385,7 +420,7 @@ function describePage(html) {
         ", título=" + (t ? t[1].trim().slice(0, 25) : "?") +
         ", m3u8=" + (/m3u8/.test(html) ? "sí" : "no") +
         ", packer=" + (/eval\(function\(p,a,c,k,e,/.test(html) ? "sí" : "no") +
-        ((html || "").length < 2000 ? ", cuerpo=" + String(html).replace(/\s+/g, " ").replace(/<style[\s\S]*?<\/style>/gi, "").slice(0, 380) : "");
+        ((html || "").length < 2000 ? ", cuerpo=" + String(html).replace(/^[\s\S]*?<body/i, "<body").replace(/\s+/g, " ").slice(0, 520) : "");
 }
 // Páginas "Loading..." de Streamwish & cía: redirigen con JS o meta refresh a otro dominio/ruta
 function findRedirect(html, baseUrl) {
@@ -398,13 +433,15 @@ function findRedirect(html, baseUrl) {
     var u = absUrl(m[1].replace(/\\\//g, "/"), getOrigin(baseUrl));
     return /^https?:/i.test(u) && u !== baseUrl ? u : null;
 }
-function wishFromUrl(pageUrl, hop) {
+function wishFromUrl(pageUrl, hop, variant) {
     hop = hop || 0;
+    variant = variant || {};
     // Se pide como lo haría el navegador del celular: UA móvil y Referer del sitio (el iframe vive ahí)
-    return fetchText(pageUrl, hop ? getOrigin(pageUrl) + "/" : SITE_BASE + "/", { "User-Agent": MOBILE_UA, "Accept-Language": "es-419,es;q=0.9" }).then(function (r) {
+    var ref = hop ? getOrigin(pageUrl) + "/" : (variant.noRef ? "-" : SITE_BASE + "/");
+    return fetchText(pageUrl, ref, { "User-Agent": variant.ua || MOBILE_UA, "Accept-Language": "es-419,es;q=0.9" }).then(function (r) {
         if (hop < 3 && r.html.length < 4000 && !/m3u8|eval\(function\(p,a,c,k,e,/.test(r.html)) {
             var next = findRedirect(r.html, r.url || pageUrl);
-            if (next) return wishFromUrl(next, hop + 1);
+            if (next) return wishFromUrl(next, hop + 1, variant);
         }
         var origin = getOrigin(r.url || pageUrl);
         var js = r.html;
@@ -441,8 +478,36 @@ function wishFromUrl(pageUrl, hop) {
         return out;
     });
 }
+// Primera variante que funcione (Promise.any a mano)
+function firstOk(jobs) {
+    return new Promise(function (resolve, reject) {
+        var left = jobs.length, errs = [], done = false;
+        if (!left) return reject(Error("sin variantes"));
+        jobs.forEach(function (j, i) {
+            j().then(function (v) { if (!done) { done = true; resolve(v); } }, function (e) {
+                errs[i] = e && e.message ? e.message : String(e);
+                if (--left === 0 && !done) reject(Error(errs.filter(Boolean)[0] + (errs.length > 1 ? " (+" + (errs.length - 1) + " variantes)" : "")));
+            });
+        });
+    });
+}
+var WISH_MIRRORS = ["hlswish.com", "embedwish.com", "streamwish.com", "awish.pro", "sfastwish.com"];
 function extractWish(embedUrl) {
     if (embedUrl.indexOf("//") === 0) embedUrl = "https:" + embedUrl;
+    // streamwish.to a veces devuelve una página "Loading..." sin video a quien no es navegador: se prueban otro UA, sin Referer y dominios espejo
+    if (/streamwish\.to|streamwish\.com|wish/i.test(getHost(embedUrl)) && !/hglink|vibuxer/i.test(embedUrl)) {
+        var jobs = [
+            function () { return wishFromUrl(embedUrl); },
+            function () { return wishFromUrl(embedUrl, 0, { ua: UA }); },
+            function () { return wishFromUrl(embedUrl, 0, { noRef: true }); }
+        ];
+        var code = /\/(?:e|v|d|f)\/([A-Za-z0-9]+)/.exec(embedUrl);
+        if (code) WISH_MIRRORS.forEach(function (h) {
+            if (getHost(embedUrl) === h) return;
+            jobs.push(function () { return wishFromUrl("https://" + h + "/e/" + code[1]); });
+        });
+        return firstOk(jobs);
+    }
     return wishFromUrl(embedUrl).then(null, function (e) {
         // hglink.to a veces no responde; SeriesKao lo cambia por vibuxer.com
         if (/hglink\.to/i.test(embedUrl)) return wishFromUrl(embedUrl.replace(/hglink\.to/i, "vibuxer.com")).then(null, function (e2) { throw Error(e.message + " | " + e2.message); });
