@@ -1,12 +1,12 @@
 {
   "name": "Danimados",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "scrapers": [
     {
       "id": "danimados",
       "name": "Danimados",
       "description": "Caricaturas y anime en español latino (danimados.cc)",
-      "version": "1.0.4",
+      "version": "1.0.5",
       "author": "",
       "supportedTypes": ["tv"],
       "filename": "providers/danimados.js",
