@@ -21,6 +21,7 @@ var MOBILE_UA = "Mozilla/5.0 (Linux; Android 13; moto g82 5G) AppleWebKit/537.36
 
 // DEBUG: true muestra en la lista una tarjeta ⚠ con el motivo cuando no hay enlaces. Ponlo en false al terminar.
 var DEBUG = false;
+var PREFER_HLS4 = true; // Streamwish/StreamHG: mostrar solo hls4 (las demás no reproducen); poner false para ver todas
 
 // Switch de sources (el orden de este objeto es el orden de salida)
 var ENABLED_SOURCES = {
@@ -473,6 +474,11 @@ function wishFromUrl(pageUrl, hop, variant) {
         if (out.length === 0) {
             var any = /["'](https?:\/\/[^"'\s\\<>]+\.m3u8[^"'\s\\<>]*|\/[^"'\s\\<>]+\.m3u8[^"'\s\\<>]*)["']/g;
             while ((m = any.exec(js)) !== null) add("hls", m[1]);
+        }
+        // En este sitio solo hls4 reproduce bien: si existe, se devuelve únicamente ese
+        if (PREFER_HLS4) {
+            var h4 = out.filter(function (o) { return /\bhls4$/.test(o.label); });
+            if (h4.length) { h4[0].label = name; out = h4; }
         }
         if (out.length === 0) throw Error(name + ": no se encontró ningún hls (" + describePage(r.html) + ")");
         return out;
